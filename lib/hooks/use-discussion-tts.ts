@@ -50,6 +50,13 @@ interface QueueItem {
   fallbackVoice?: ResolvedVoice;
 }
 
+/**
+ * How many queued segments behind the playback head may be synthesizing or
+ * ready at once. With the head's own request this bounds the client to three
+ * concurrent synthesis requests, and an interruption to two unplayed clips.
+ */
+const MAX_PREPARED_AHEAD = 2;
+
 interface PreparedSegment {
   item: QueueItem;
   controller: AbortController;
@@ -82,7 +89,8 @@ export function useDiscussionTTS({ enabled, agents, onAudioStateChange }: Discus
   const queueRef = useRef<QueueItem[]>([]);
   const isPlayingRef = useRef(false);
   const currentItemRef = useRef<QueueItem | null>(null);
-  const prefetchedRef = useRef<PreparedSegment | null>(null);
+  /** Prepared queued segments, keyed by the queue item they belong to. */
+  const preparedRef = useRef(new Map<QueueItem, PreparedSegment>());
   const prefetchNextRef = useRef<() => void>(() => {});
   const finishAudioRef = useRef<(() => void) | null>(null);
   const pausedRef = useRef(false);
@@ -291,29 +299,39 @@ export function useDiscussionTTS({ enabled, agents, onAudioStateChange }: Discus
   );
 
   const prefetchNext = useCallback(() => {
-    // One active synthesis at a time, with at most one prepared segment ahead
-    // of playback. Browser speech stays on the sequential playback path.
-    if (!enabled || ttsMuted || pausedRef.current || !isPlayingRef.current) return;
-    if (abortControllerRef.current || prefetchedRef.current) return;
-    const item = queueRef.current[0];
-    if (!item || item.providerId === 'browser-native-tts') return;
-    const controller = new AbortController();
-    prefetchedRef.current = {
-      item,
-      controller,
-      result: generateAudio(item, controller).then(
-        (audioUrl) => ({ audioUrl }),
-        (error: unknown) => ({ error }),
-      ),
-    };
+    // Prepare the first queued segments while earlier ones play or synthesize,
+    // so a segment's audio is ready when the playback head reaches it. Audio
+    // still plays strictly in queue order. Browser speech stays on the
+    // sequential playback path.
+    if (!enabled || ttsMuted || pausedRef.current) return;
+    const prepared = preparedRef.current;
+    for (const item of queueRef.current.slice(0, MAX_PREPARED_AHEAD)) {
+      if (item.providerId === 'browser-native-tts' || prepared.has(item)) continue;
+      const controller = new AbortController();
+      prepared.set(item, {
+        item,
+        controller,
+        result: generateAudio(item, controller).then(
+          (audioUrl) => ({ audioUrl }),
+          (error: unknown) => ({ error }),
+        ),
+      });
+    }
   }, [enabled, ttsMuted, generateAudio]);
   prefetchNextRef.current = prefetchNext;
+
+  /** Cancel every prepared segment that has not reached the playback head. */
+  const cancelPrepared = useCallback(() => {
+    for (const prepared of preparedRef.current.values()) prepared.controller.abort();
+    preparedRef.current.clear();
+  }, []);
 
   const processQueue = useCallback(async () => {
     if (pausedRef.current) return; // Don't advance while paused
     if (isPlayingRef.current || queueRef.current.length === 0) return;
     if (!enabled || ttsMuted) {
       queueRef.current = [];
+      cancelPrepared();
       return;
     }
 
@@ -336,19 +354,22 @@ export function useDiscussionTTS({ enabled, agents, onAudioStateChange }: Discus
     // Server TTS — use the item's provider, not the global one
     currentProviderRef.current = item.providerId;
     onAudioStateChangeRef.current?.(item.agentId, 'generating');
-    const prefetched = prefetchedRef.current;
-    const controller = prefetched?.item === item ? prefetched.controller : new AbortController();
-    if (prefetched?.item === item) prefetchedRef.current = null;
+    // The head takes over its prepared synthesis, or starts its own before the
+    // lookahead is topped up, so later segments never get ahead of it.
+    const prepared = preparedRef.current.get(item);
+    preparedRef.current.delete(item);
+    const controller = prepared?.controller ?? new AbortController();
     abortControllerRef.current = controller;
+    const pending =
+      prepared?.result ??
+      generateAudio(item, controller).then(
+        (audioUrl) => ({ audioUrl }),
+        (error: unknown) => ({ error }),
+      );
+    prefetchNextRef.current();
 
     try {
-      const result =
-        prefetched?.item === item
-          ? await prefetched.result
-          : await generateAudio(item, controller).then(
-              (audioUrl) => ({ audioUrl }),
-              (error: unknown) => ({ error }),
-            );
+      const result = await pending;
       if (controller.signal.aborted || currentItemRef.current !== item) return;
       if ('error' in result) throw result.error;
       abortControllerRef.current = null;
@@ -445,7 +466,7 @@ export function useDiscussionTTS({ enabled, agents, onAudioStateChange }: Discus
         queueMicrotask(() => processQueueRef.current());
       }
     }
-  }, [enabled, t, ttsMuted, generateAudio, finishBrowserLine]);
+  }, [enabled, t, ttsMuted, generateAudio, finishBrowserLine, cancelPrepared]);
 
   processQueueRef.current = processQueue;
 
@@ -512,8 +533,7 @@ export function useDiscussionTTS({ enabled, agents, onAudioStateChange }: Discus
     currentProviderRef.current = null;
     currentItemRef.current = null;
     finishAudioRef.current = null;
-    prefetchedRef.current?.controller.abort();
-    prefetchedRef.current = null;
+    cancelPrepared();
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
     // The element outlives this line now, so the line's handlers have to go with
@@ -529,7 +549,7 @@ export function useDiscussionTTS({ enabled, agents, onAudioStateChange }: Discus
     isPlayingRef.current = false;
     segmentDoneCounterRef.current = 0;
     onAudioStateChangeRef.current?.(null, 'idle');
-  }, []);
+  }, [cancelPrepared]);
 
   /** Pause TTS audio (browser-native or server). Does NOT stop the SSE stream. */
   const pause = useCallback(() => {
@@ -582,14 +602,13 @@ export function useDiscussionTTS({ enabled, agents, onAudioStateChange }: Discus
   // that from turning TTS off. Only speculative work is cancelled on mute.
   useEffect(() => {
     if (ttsMuted) {
-      prefetchedRef.current?.controller.abort();
-      prefetchedRef.current = null;
+      cancelPrepared();
     } else if (!enabled) {
       cleanup();
     } else {
       prefetchNextRef.current();
     }
-  }, [enabled, ttsMuted, cleanup]);
+  }, [enabled, ttsMuted, cleanup, cancelPrepared]);
 
   useEffect(() => cleanup, [cleanup]);
 

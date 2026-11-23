@@ -216,10 +216,10 @@ afterEach(() => {
 });
 
 describe('discussion TTS synthesis lookahead', () => {
-  it('requests B during A playback and consumes the prepared result exactly once', async () => {
+  it('requests B while A is still synthesizing and consumes the prepared result exactly once', async () => {
     await seal('A');
     await seal('B');
-    expect(requests.map((r) => r.body.audioId)).toEqual(['A']);
+    expect(requests.map((r) => r.body.audioId)).toEqual(['A', 'B']);
     await respond(0);
 
     expect(FakeAudio.instances[0].paused).toBe(false);
@@ -239,19 +239,86 @@ describe('discussion TTS synthesis lookahead', () => {
     expect(hook.shouldHold()).toEqual({ holding: false, segmentDone: 2 });
   });
 
-  it('limits lookahead to one queued segment, including text arriving during playback', async () => {
+  it('limits lookahead to two queued segments, including text arriving during playback', async () => {
     await seal('A');
     await respond(0);
     await seal('B');
     await seal('C');
     await seal('D');
-    expect(requests.map((r) => r.body.audioId)).toEqual(['A', 'B']);
-    await respond(1);
-    expect(requests).toHaveLength(2);
-
-    await act(async () => FakeAudio.instances[0].end());
     expect(requests.map((r) => r.body.audioId)).toEqual(['A', 'B', 'C']);
+    await respond(1);
+    expect(requests).toHaveLength(3);
+
+    // B moves to the playback head, which frees a slot for D.
+    await act(async () => FakeAudio.instances[0].end());
+    expect(requests.map((r) => r.body.audioId)).toEqual(['A', 'B', 'C', 'D']);
     expect(FakeAudio.instances).toHaveLength(1);
+  });
+
+  it('plays prepared segments in queue order when a later one is ready first', async () => {
+    await seal('A');
+    await seal('B');
+    await seal('C');
+    await respond(0);
+    await respond(2); // C is ready before B.
+    await act(async () => FakeAudio.instances[0].end());
+    expect(stateChange).toHaveBeenLastCalledWith('teacher', 'generating');
+    expect(FakeAudio.instances[0].play).toHaveBeenCalledOnce();
+
+    await respond(1);
+    expect(FakeAudio.instances[0].src).toContain(btoa('audio-1'));
+    await act(async () => FakeAudio.instances[0].end());
+    expect(FakeAudio.instances[0].src).toContain(btoa('audio-2'));
+    expect(FakeAudio.instances[0].play).toHaveBeenCalledTimes(3);
+    expect(requests.map((r) => r.body.audioId)).toEqual(['A', 'B', 'C']);
+  });
+
+  it('starts the head before the lookahead when segments queued up while paused', async () => {
+    act(() => hook.pause());
+    await seal('A');
+    await seal('B');
+    await seal('C');
+    expect(requests).toHaveLength(0);
+    await act(async () => hook.resume());
+    expect(requests.map((r) => r.body.audioId)).toEqual(['A', 'B', 'C']);
+  });
+
+  it('sends no new request while paused and tops up the lookahead on resume', async () => {
+    await seal('A');
+    await respond(0);
+    act(() => hook.pause());
+    await seal('B');
+    expect(requests).toHaveLength(1);
+    await act(async () => hook.resume());
+    expect(requests.map((r) => r.body.audioId)).toEqual(['A', 'B']);
+  });
+
+  it('aborts every prepared segment and the head on cleanup', async () => {
+    await seal('A');
+    await seal('B');
+    await seal('C');
+    act(() => hook.cleanup());
+    expect(requests.map((r) => r.signal.aborted)).toEqual([true, true, true]);
+    await respond(1);
+    await respond(2);
+    await respond(0);
+    expect(FakeAudio.instances).toHaveLength(0);
+    expect(hook.shouldHold()).toEqual({ holding: false, segmentDone: 0 });
+  });
+
+  it('ignores a head that was still synthesizing when the lesson was cleaned up', async () => {
+    await seal('A');
+    await seal('B');
+    await respond(0);
+    await act(async () => FakeAudio.instances[0].end()); // B is now the head, still pending.
+    act(() => hook.cleanup());
+    expect(requests[1].signal.aborted).toBe(true);
+    await seal('new');
+    await respond(1); // The old B arrives late.
+    expect(FakeAudio.instances[0].play).toHaveBeenCalledOnce();
+    await respond(2);
+    expect(FakeAudio.instances[0].src).toContain(btoa('audio-2'));
+    expect(FakeAudio.instances[0].play).toHaveBeenCalledTimes(2);
   });
 
   it('ignores an old response after cleanup, even if the transport ignores abort', async () => {
@@ -273,7 +340,7 @@ describe('discussion TTS synthesis lookahead', () => {
     await seal('C');
     await respond(0);
     await act(async () => FakeAudio.instances[0].end());
-    expect(requests).toHaveLength(2);
+    expect(requests).toHaveLength(3);
     expect(FakeAudio.instances).toHaveLength(1);
     expect(stateChange).toHaveBeenLastCalledWith('teacher', 'generating');
     await respond(1);
@@ -288,7 +355,7 @@ describe('discussion TTS synthesis lookahead', () => {
     act(() => hook.pause());
     await respond(0);
     expect(FakeAudio.instances[0].play).not.toHaveBeenCalled();
-    expect(requests).toHaveLength(1);
+    expect(requests).toHaveLength(2);
 
     await act(async () => {
       hook.resume();
@@ -408,6 +475,18 @@ describe('discussion TTS synthesis lookahead', () => {
     expect(FakeAudio.instances).toHaveLength(1);
     expect(FakeAudio.instances[0].paused).toBe(true);
     expect(hook.shouldHold()).toEqual({ holding: false, segmentDone: 0 });
+  });
+
+  it('cancels every prepared segment on mute but keeps the playing one', async () => {
+    await seal('A');
+    await seal('B');
+    await seal('C');
+    await respond(0);
+    mocks.settings.ttsMuted = true;
+    enabled = false;
+    act(() => root.render(createElement(Probe)));
+    expect(requests.map((r) => r.signal.aborted)).toEqual([false, true, true]);
+    expect(FakeAudio.instances[0].paused).toBe(false);
   });
 
   it('cancels lookahead on mute while preserving the current clip for unmute', async () => {
@@ -563,7 +642,8 @@ describe('discussion TTS synthesis lookahead', () => {
     await seal('B', 'browser-teacher');
     await seal('C');
     await respond(0);
-    expect(requests).toHaveLength(1);
+    // C is prepared behind the browser line; browser speech needs no request.
+    expect(requests.map((r) => r.body.audioId)).toEqual(['A', 'C']);
     expect(mocks.speak).not.toHaveBeenCalled();
     await act(async () => FakeAudio.instances[0].end());
     expect(mocks.speak).toHaveBeenCalledWith('Sentence B.', 'browser-voice');
