@@ -1719,6 +1719,9 @@ function getUncataloguedThinkingBodyParams(
   mode: ReturnType<typeof getThinkingMode>,
 ): { params: Record<string, unknown>; disablesThinking: boolean } | undefined {
   if (mode !== 'enabled' && mode !== 'disabled') return undefined;
+  // Local patch: gateways such as LiteLLM forward unknown body params to the
+  // upstream vendor (e.g. Anthropic), which rejects chat_template_kwargs.
+  if (process.env.OPENMAIC_DISABLE_CHAT_TEMPLATE_KWARGS === 'true') return undefined;
 
   const thinkingEnabled = mode === 'enabled';
   const chatTemplateKwargs: Record<string, unknown> = { enable_thinking: thinkingEnabled };
