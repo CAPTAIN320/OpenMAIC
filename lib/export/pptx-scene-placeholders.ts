@@ -386,7 +386,7 @@ export function pptxSlideNumbers(
 const FALLBACK_THEME = {
   backgroundColor: '#ffffff',
   fontColor: '#333333',
-  fontName: 'Microsoft YaHei',
+  fontName: 'Open Sans',
   accent: '#5b6cf9',
 };
 

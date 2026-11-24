@@ -106,7 +106,7 @@ export function createDefaultSlide(id: string): Slide {
       backgroundColor: '#ffffff',
       themeColors: ['#5b8def', '#8b5cf6', '#10b981', '#f59e0b'],
       fontColor: '#111827',
-      fontName: 'Inter',
+      fontName: 'Open Sans',
     },
     elements: [],
     background: { type: 'solid', color: '#ffffff' },

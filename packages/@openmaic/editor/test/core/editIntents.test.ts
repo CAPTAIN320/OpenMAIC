@@ -403,7 +403,7 @@ describe('editor edit intents', () => {
       text: {
         content: '<p>New label</p>',
         align: 'middle',
-        defaultFontName: 'Microsoft YaHei',
+        defaultFontName: 'Open Sans',
         defaultColor: '#333333',
       },
     });

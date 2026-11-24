@@ -63,7 +63,7 @@ export function shapeToTextFallback(shape: PPTShapeElement): PPTTextElement | nu
     defaultFontName:
       typeof label.defaultFontName === 'string' && label.defaultFontName
         ? label.defaultFontName
-        : 'Microsoft YaHei',
+        : 'Open Sans',
     defaultColor,
     fill,
     vAlign: label.align === 'bottom' ? 'bottom' : label.align === 'top' ? 'top' : 'middle',

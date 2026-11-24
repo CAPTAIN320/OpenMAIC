@@ -7,7 +7,7 @@ interface SlideTextTheme {
   readonly fontName: string;
 }
 
-const FALLBACK_TEXT_THEME: SlideTextTheme = { fontColor: '#333333', fontName: 'Microsoft YaHei' };
+const FALLBACK_TEXT_THEME: SlideTextTheme = { fontColor: '#333333', fontName: 'Open Sans' };
 
 function selectSlideTextTheme(content: SceneContent): SlideTextTheme {
   return (content.type === 'slide' && content.canvas.theme) || FALLBACK_TEXT_THEME;

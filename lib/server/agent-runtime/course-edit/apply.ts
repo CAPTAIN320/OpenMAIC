@@ -802,7 +802,7 @@ export function emptySlideContent(): SlideContent {
         backgroundColor: '#ffffff',
         themeColors: ['#2563eb'],
         fontColor: '#111827',
-        fontName: 'Inter',
+        fontName: 'Open Sans',
       },
       elements: [],
     },

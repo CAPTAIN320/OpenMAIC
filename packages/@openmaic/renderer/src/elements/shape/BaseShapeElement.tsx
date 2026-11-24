@@ -75,7 +75,7 @@ function ValidShapeElement({
   const text: ShapeText = elementInfo.text || {
     content: '',
     align: 'middle',
-    defaultFontName: 'Microsoft YaHei',
+    defaultFontName: 'Open Sans',
     defaultColor: '#333333',
   };
 

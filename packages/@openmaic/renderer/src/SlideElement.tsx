@@ -26,7 +26,7 @@ import { BaseCodeElement } from './elements/code/BaseCodeElement';
 
 const DEFAULT_THEME = {
   fontColor: '#333333',
-  fontName: 'Microsoft YaHei',
+  fontName: 'Open Sans',
 } as const;
 
 export interface SlideElementProps {

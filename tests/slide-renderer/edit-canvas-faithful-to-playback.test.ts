@@ -59,7 +59,7 @@ describe('editing canvas stays faithful to playback', () => {
   it('falls back to the default slide text without a theme', () => {
     scene.content = { type: 'slide', canvas: {} };
     for (const markup of renderBoth()) {
-      expect(markup).toMatch(/^<div[^>]*style="[^"]*color:#333333;font-family:Microsoft YaHei/);
+      expect(markup).toMatch(/^<div[^>]*style="[^"]*color:#333333;font-family:Open Sans/);
     }
   });
 

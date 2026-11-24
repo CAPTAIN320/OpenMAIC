@@ -61,7 +61,7 @@ export function createWhiteboardPreview(
               backgroundColor: '#ffffff',
               themeColors: [],
               fontColor: '#333333',
-              fontName: 'Microsoft YaHei',
+              fontName: 'Open Sans',
             },
           },
         },

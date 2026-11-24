@@ -534,7 +534,7 @@ function applyOperation(content: SlideContent, operation: EditorOperation): void
       element.text = {
         align: 'middle',
         defaultColor: '#333333',
-        defaultFontName: 'Microsoft YaHei',
+        defaultFontName: 'Open Sans',
         ...element.text,
         content: operation.content,
       };
